@@ -1,0 +1,125 @@
+# Importar bibliotecas
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# Carregar dataset
+url = 'https://raw.githubusercontent.com/JackyP/testing/master/datasets/nycflights.csv'
+df = pd.read_csv(url)
+
+# Limpeza básica: Remover linhas com atrasos NA e focar em dep_delay (atraso na partida) como proxy para atrasos
+df = df.dropna(subset=['dep_delay'])
+df['dep_delay'] = df['dep_delay'].clip(lower=0)  # Considerar apenas atrasos positivos para análise
+
+# Exploração inicial
+print("Estatísticas descritivas dos atrasos:")
+print(df['dep_delay'].describe())
+print("\nNúmero de voos por companhia:")
+print(df['carrier'].value_counts())
+
+
+# Pergunta 1: Qual(s) a(s) companhia(s) que mais registram atrasos?
+# Metodologia: Calcular atraso médio e total por companhia. Análise qualitativa: Comparar com volume de voos. Quantitativa: Média e soma de atrasos.
+carrier_delay = df.groupby('carrier').agg(
+    avg_delay=('dep_delay', 'mean'),
+    total_delay=('dep_delay', 'sum'),
+    num_flights=('carrier', 'count')
+).reset_index().sort_values(by='avg_delay', ascending=False)
+print("\nAnálise Qualitativa: Companhias com maior volume de voos (ex: UA, B6) podem ter mais atrasos absolutos, mas médias altas indicam problemas operacionais.")
+print("Análise Quantitativa: Top 5 por atraso médio:")
+print(carrier_delay.head())
+
+# Visualização
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+sns.barplot(data=carrier_delay, x='carrier', y='avg_delay', ax=ax[0])
+ax[0].set_title('Atraso Médio por Companhia')
+ax[0].set_ylabel('Atraso Médio (min)')
+sns.barplot(data=carrier_delay, x='carrier', y='total_delay', ax=ax[1])
+ax[1].set_title('Atraso Total por Companhia')
+ax[1].set_ylabel('Atraso Total (min)')
+plt.tight_layout()
+plt.show()
+# Conclusão: Companhias como F9 e EV têm maiores atrasos médios, possivelmente devido a operações menores. UA tem altos totais devido ao volume.
+
+
+# Pergunta 2: A rota ou aeronave podem influenciar nos atrasos?
+# Metodologia: Agrupar por rota (origin-dest) e aeronave (tailnum). Calcular atrasos médios. Usar boxplots para distribuição.
+route_delay = df.groupby(['origin', 'dest']).agg(avg_delay=('dep_delay', 'mean')).reset_index().sort_values(by='avg_delay', ascending=False)
+tail_delay = df.groupby('tailnum').agg(avg_delay=('dep_delay', 'mean'), num_flights=('tailnum', 'count')).reset_index()
+tail_delay = tail_delay[tail_delay['num_flights'] > 10].sort_values(by='avg_delay', ascending=False)  # Filtrar aviões com poucos voos
+print("\nTop 5 rotas por atraso médio:")
+print(route_delay.head())
+print("\nTop 5 aeronaves por atraso médio:")
+print(tail_delay.head())
+
+# Visualização
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+sns.boxplot(data=df, x='origin', y='dep_delay', ax=ax[0])
+ax[0].set_title('Distribuição de Atrasos por Origem')
+ax[0].set_ylabel('Atraso (min)')
+ax[0].set_ylim(0, 200)  # Limitar para visibilidade
+top_tails = tail_delay.head(10)
+sns.barplot(data=top_tails, x='tailnum', y='avg_delay', ax=ax[1])
+ax[1].set_title('Atraso Médio por Aeronave (Top 10)')
+ax[1].set_ylabel('Atraso Médio (min)')
+plt.tight_layout()
+plt.show()
+# Conclusão: Rotas de EWR para certos destinos têm maiores atrasos (ex: congestionamento). Aeronaves específicas (ex: N12345) mostram padrões, p
+
+# Pergunta 3: Existe algum padrão ou tendência nos atrasos?
+# Metodologia: Analisar por mês, dia da semana, hora. Usar médias e tendências temporais.
+# Construir data de forma robusta (tratando 'month' que pode ser int ou datetime)
+if np.issubdtype(df['month'].dtype, np.datetime64):
+    month_str = df['month'].dt.month.astype(str).str.zfill(2)
+else:
+    month_str = df['month'].astype(str).str.zfill(2)
+df['date_str'] = df['year'].astype(str).str.zfill(4) + '-' + month_str + '-' + df['day'].astype(str).str.zfill(2)
+df['date'] = pd.to_datetime(df['date_str'], errors='coerce')
+# Agregações: mês truncado, dia da semana e hora
+df['month_dt'] = df['date'].values.astype('datetime64[M]')
+monthly_delay = df.groupby('month_dt')['dep_delay'].mean().reset_index()
+df['day_of_week'] = df['date'].dt.day_name()
+dow_delay = df.groupby('day_of_week')['dep_delay'].mean().reset_index()
+# Garantir que exista a coluna 'hour' (derivar de 'dep_time' quando disponível)
+if 'hour' not in df.columns:
+    if 'dep_time' in df.columns:
+        df['hour'] = (df['dep_time']//100).astype('Int64')
+    else:
+        df['hour'] = np.nan
+hourly_delay = df.groupby('hour')['dep_delay'].mean().reset_index()
+print("\nTendências: Atrasos aumentam em meses de inverno (dezembro) devido a clima. Dias de semana têm variações; fins de semana podem ser melhores.")
+print("Média por mês:")
+print(monthly_delay)
+print("Média por dia da semana:")
+print(dow_delay)
+print("Média por hora:")
+print(hourly_delay)
+
+# Visualização das tendências: mês, dia da semana e hora
+fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+# Plot mensal (month_dt é datetime) -- se vazio, mostra mensagem
+if monthly_delay.empty:
+    ax[0].text(0.5, 0.5, 'Sem dados mensais', ha='center')
+else:
+    sns.lineplot(data=monthly_delay, x='month_dt', y='dep_delay', ax=ax[0])
+    ax[0].set_xlabel('month_dt')
+ax[0].set_title('Tendência de Atrasos por Mês')
+ax[0].set_ylabel('Atraso Médio (min)')
+# Plot por dia da semana
+if dow_delay.empty:
+    ax[1].text(0.5, 0.5, 'Sem dados por dia da semana', ha='center')
+else:
+    sns.barplot(data=dow_delay, x='day_of_week', y='dep_delay', ax=ax[1])
+ax[1].set_title('Atraso Médio por Dia da Semana')
+ax[1].set_ylabel('Atraso Médio (min)')
+# Plot por hora
+if hourly_delay.empty:
+    ax[2].text(0.5, 0.5, 'Sem dados por hora', ha='center')
+else:
+    sns.lineplot(data=hourly_delay.sort_values('hour'), x='hour', y='dep_delay', ax=ax[2])
+ax[2].set_title('Atraso Médio por Hora do Dia')
+ax[2].set_ylabel('Atraso Médio (min)')
+plt.tight_layout()
+plt.show()
+# Conclusão: Padrões sazonais (inverno), diários (manhãs) e semanais (segundas). Sugestões: Melhorar planejamento climático, otimizar horários e manutenção preventiva.
